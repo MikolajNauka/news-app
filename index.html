@@ -375,16 +375,19 @@
 
 <script src="main.js"></script>
 <script>
+  // Rejestracja Service Workera z obsługą błędów
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('./service-worker.js')
-        .then((registration) => {
-          console.log('Service Worker zarejestrowany:', registration);
+        .then(registration => {
+          console.log('✅ Service Worker zarejestrowany:', registration.scope);
         })
-        .catch((error) => {
-          console.log('Rejestracja Service Workera nieudana:', error);
+        .catch(error => {
+          console.error('❌ Błąd rejestracji Service Workera:', error);
         });
     });
+  } else {
+    console.log('⚠️ Service Worker nie jest wspierany przez tę przeglądarkę');
   }
 </script>
 </body>
