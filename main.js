@@ -1,6 +1,14 @@
-// --------------------- KONFIGURACJA -------------------------
-// Uwaga: API key jest teraz bezpiecznie przechowywany po stronie serwera!
-// Frontend nie ma już dostępu do klucza API
+const BASE_URL = 'https://api.rss2json.com/v1/api.json';
+
+// Polskie źródła RSS 
+const POLISH_RSS_FEEDS = {
+    general: 'https://www.pap.pl/feed/',
+    technology: 'https://www.spidersweb.pl/feed',
+    sports: 'https://sportowefakty.wp.pl/feed',
+    business: 'https://www.bankier.pl/rss/wiadomosci.xml',
+    health: 'https://www.medonet.pl/rss',
+    science: 'https://www.national-geographic.pl/feed'
+};
 
 // Zmienne stanu aplikacji
 let currentCity = 'Warszawa';
@@ -120,7 +128,7 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Główna funkcja pobierania newsów z API (przez backend Node.js)
+// Główna funkcja pobierania newsów
 async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
     if (!city.trim()) {
         showError('❌ Wpisz nazwę miasta!');
@@ -149,32 +157,59 @@ async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
         return;
     }
 
-    // 3. Pobieranie przez własne API backendu (Node.js)
+    // 3. Pobieranie z RSS API (działa bez CORS)
     try {
-        // Budowanie zapytania do naszego serwera
-        const url = `/api/news?city=${encodeURIComponent(city)}&category=${category}&pageSize=${pageSize}`;
-        console.log('🔄 Zapytanie do backendu:', url);
-
+        // Wybierz odpowiedni RSS feed dla kategorii
+        let rssUrl = POLISH_RSS_FEEDS[category] || POLISH_RSS_FEEDS.general;
+        
+        // Dla kategorii 'general' używajmy PAP
+        if (category === 'general') {
+            rssUrl = POLISH_RSS_FEEDS.general;
+        }
+        
+        const url = `${BASE_URL}?rss_url=${encodeURIComponent(rssUrl)}`;
+        console.log('🔄 Pobieram z RSS:', url);
+        
         const response = await fetch(url);
         
-        console.log('📡 Status odpowiedzi backendu:', response.status);
-        
         if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || `HTTP ${response.status}`);
+            throw new Error(`HTTP ${response.status}`);
         }
-
-        const data = await response.json();
-        console.log('📦 Odpowiedź backendu:', data);
         
-        if (data.errors) {
-            throw new Error(data.errors[0] || 'Błąd API');
+        const data = await response.json();
+        
+        if (!data.items || data.items.length === 0) {
+            throw new Error('Brak artykułów z RSS');
         }
-
-        const articles = data.articles || [];
+        
+        // Przetwórz artykuły do naszego formatu
+        let articles = data.items.slice(0, pageSize).map(item => ({
+            title: item.title || 'Bez tytułu',
+            description: item.description ? item.description.replace(/<[^>]*>/g, '').substring(0, 200) + '...' : 'Brak opisu',
+            image: item.thumbnail || 'https://via.placeholder.com/400x200?text=Brak+zdjęcia',
+            url: item.link,
+            source: { name: data.feed?.title || 'Polskie media' },
+            publishedAt: item.pubDate
+        }));
+        
+        // Jeśli nie ma artykułów, spróbuj z innym feedem
+        if (articles.length === 0 && category !== 'general') {
+            console.log('Brak artykułów z kategorii, próbuję z general...');
+            const fallbackUrl = `${BASE_URL}?rss_url=${encodeURIComponent(POLISH_RSS_FEEDS.general)}`;
+            const fallbackResponse = await fetch(fallbackUrl);
+            const fallbackData = await fallbackResponse.json();
+            articles = fallbackData.items.slice(0, pageSize).map(item => ({
+                title: item.title,
+                description: item.description ? item.description.replace(/<[^>]*>/g, '').substring(0, 200) + '...' : 'Brak opisu',
+                image: item.thumbnail || 'https://via.placeholder.com/400x200',
+                url: item.link,
+                source: { name: fallbackData.feed?.title || 'Polskie media' },
+                publishedAt: item.pubDate
+            }));
+        }
         
         if (articles.length === 0) {
-            showError(`😢 Brak wiadomości dla "${city}". Spróbuj innego miasta lub sprawdź pisownię.`);
+            showError(`😢 Brak wiadomości dla "${city}". Spróbuj ponownie później.`);
             showLoading(false);
             return;
         }
@@ -189,7 +224,7 @@ async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
         saveNewsToCache(city, category, newsPackage);
         
         renderNews(articles);
-        statusText.innerText = `📰 Znaleziono ${articles.length} wiadomości dla "${city}" ${category !== 'general' ? `(kategoria: ${category})` : ''}`;
+        statusText.innerText = `📰 Znaleziono ${articles.length} wiadomości z Polski ${category !== 'general' ? `(kategoria: ${category})` : ''}`;
         
     } catch (error) {
         console.error('❌ Błąd fetchNews:', error);
@@ -200,29 +235,19 @@ async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
             const oldRecord = JSON.parse(expiredCache);
             if (oldRecord.data && oldRecord.data.articles && oldRecord.data.articles.length > 0) {
                 renderNews(oldRecord.data.articles);
-                statusText.innerText = `⚠️ Tryb awaryjny: starsze wiadomości z ${city} (zapisane ${new Date(oldRecord.timestamp).toLocaleTimeString()})`;
+                statusText.innerText = `⚠️ Tryb awaryjny: starsze wiadomości (${new Date(oldRecord.timestamp).toLocaleTimeString()})`;
                 showLoading(false);
                 return;
             }
         }
         
-        // Sprawdź konkretne błędy
-        let errorMessage = error.message;
-        if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-            errorMessage = '🌐 Nie można połączyć się z serwerem. Upewnij się, że backend Node.js działa (npm start).';
-        } else if (error.message.includes('429')) {
-            errorMessage = '⏰ Przekroczono limit zapytań do API. Spróbuj za chwilę.';
-        } else if (error.message.includes('403')) {
-            errorMessage = '🔑 Błąd autoryzacji API. Sprawdź klucz API w pliku server.js';
-        }
-        
-        showError(`Nie udało się pobrać newsów: ${errorMessage}`);
+        showError(`Nie udało się pobrać newsów: ${error.message}. Spróbuj odświeżyć stronę.`);
     } finally {
         showLoading(false);
     }
 }
 
-// Geolokalizacja
+// Geolokalizacja (dla "moja okolica")
 function getUserLocationAndFetch() {
     if (!navigator.geolocation) {
         showError('Twoja przeglądarka nie wspiera geolokalizacji.');
@@ -278,7 +303,6 @@ function handleNetworkStatus() {
     function updateOfflineUI() {
         if (!navigator.onLine) {
             offlineBanner.style.display = 'block';
-            // Jeżeli brak online i próbujemy wyszukać – pokażemy cache jeśli istnieje
             if (!isLoading && currentCity) {
                 const cachedData = getNewsFromCache(currentCity, currentCategory);
                 if (cachedData && cachedData.articles) {
@@ -288,7 +312,6 @@ function handleNetworkStatus() {
             }
         } else {
             offlineBanner.style.display = 'none';
-            // Po powrocie online, odśwież dane
             if (currentCity) {
                 fetchNews(currentCity, currentCategory, currentPageSize, true);
             }
