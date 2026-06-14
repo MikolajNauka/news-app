@@ -123,7 +123,7 @@ function escapeHtml(text) {
 // Główna funkcja pobierania newsów z API (lub cache)
 async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
     if (!city.trim()) {
-        showError('❌ Wpisz nazwę miasta!');
+        showError('Wpisz nazwę miasta!');
         return;
     }
 

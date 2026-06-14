@@ -3,10 +3,11 @@ const urlsToCache = [
   '/',
   '/index.html',
   '/main.js',
-  '/manifest.json'
+  '/manifest.json',
+  '/icon-192.png',
+  'icon-512.png'
 ];
 
-// Instalacja
 self.addEventListener('install', event => {
   console.log('Service Worker: Instalowanie...');
   event.waitUntil(
@@ -22,7 +23,6 @@ self.addEventListener('install', event => {
   );
 });
 
-// Aktywacja
 self.addEventListener('activate', event => {
   console.log('Service Worker: Aktywacja...');
   event.waitUntil(
@@ -42,11 +42,9 @@ self.addEventListener('activate', event => {
   );
 });
 
-// Przechwytywanie zapytań
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   
-  // API nie cache'ujemy (bo ma własny cache w localStorage)
   if (url.hostname === 'gnews.io' || url.hostname === 'nominatim.openstreetmap.org') {
     return;
   }
