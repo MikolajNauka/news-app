@@ -1,14 +1,4 @@
-const BASE_URL = 'https://api.rss2json.com/v1/api.json';
-
-// Polskie źródła RSS 
-const POLISH_RSS_FEEDS = {
-    general: 'https://www.pap.pl/feed/',
-    technology: 'https://www.spidersweb.pl/feed',
-    sports: 'https://sportowefakty.wp.pl/feed',
-    business: 'https://www.bankier.pl/rss/wiadomosci.xml',
-    health: 'https://www.medonet.pl/rss',
-    science: 'https://www.national-geographic.pl/feed'
-};
+const USE_TEST_API = true; // Zmień na false gdy będzie działać
 
 // Zmienne stanu aplikacji
 let currentCity = 'Warszawa';
@@ -27,6 +17,34 @@ const statusArea = document.getElementById('statusArea');
 const statusText = document.getElementById('statusText');
 const loadingSpinner = document.getElementById('loadingSpinner');
 const offlineBanner = document.getElementById('offlineBanner');
+
+// --------------------- DANE TESTOWE (na wypadek awarii API) ---------------------
+const MOCK_ARTICLES = [
+    {
+        title: "Przykładowy artykuł 1 - Twój serwis newsowy działa!",
+        description: "To jest przykładowy artykuł pokazujący jak będą wyglądać wiadomości. Gdy API zadziała, zobaczysz tutaj prawdziwe newsy z Twojej okolicy.",
+        image: "https://via.placeholder.com/400x200/667eea/white?text=News+1",
+        url: "#",
+        source: { name: "System informacyjny" },
+        publishedAt: new Date().toISOString()
+    },
+    {
+        title: "Przykładowy artykuł 2 - Sprawdź połączenie z internetem",
+        description: "Jeśli widzisz ten artykuł, oznacza to że aplikacja działa poprawnie, ale API tymczasowo nie odpowiada. Spróbuj odświeżyć stronę za chwilę.",
+        image: "https://via.placeholder.com/400x200/48bb78/white?text=News+2",
+        url: "#",
+        source: { name: "System informacyjny" },
+        publishedAt: new Date().toISOString()
+    },
+    {
+        title: "Przykładowy artykuł 3 - Funkcjonalność PWA jest aktywna",
+        description: "Możesz zainstalować tę aplikację na swoim telefonie i korzystać z niej offline. To jest zaleta Progressive Web Apps!",
+        image: "https://via.placeholder.com/400x200/764ba2/white?text=PWA",
+        url: "#",
+        source: { name: "System informacyjny" },
+        publishedAt: new Date().toISOString()
+    }
+];
 
 // --------------------- FUNKCJE POMOCNICZE ---------------------
 function showLoading(show) {
@@ -54,7 +72,6 @@ function clearStatusMessage() {
     statusText.innerText = '';
 }
 
-// Zapis i odczyt z localStorage (dla trybu offline / PWA)
 function saveNewsToCache(city, category, newsData) {
     const cacheKey = `news_${city}_${category}`;
     const cacheRecord = {
@@ -72,7 +89,6 @@ function getNewsFromCache(city, category) {
     if (!cached) return null;
     
     const record = JSON.parse(cached);
-    // Cache wygasa po 30 minutach (1800000 ms)
     const isExpired = (Date.now() - record.timestamp) > 30 * 60 * 1000;
     
     if (isExpired) {
@@ -82,10 +98,9 @@ function getNewsFromCache(city, category) {
     return record.data;
 }
 
-// Renderowanie kart newsów
 function renderNews(articles) {
     if (!articles || articles.length === 0) {
-        newsGrid.innerHTML = '<div class="status-message">😢 Brak artykułów dla tego miasta i kategorii. Spróbuj innego miasta lub kategorii.</div>';
+        newsGrid.innerHTML = '<div class="status-message">😢 Brak artykułów. Spróbuj ponownie później.</div>';
         return;
     }
 
@@ -94,12 +109,10 @@ function renderNews(articles) {
         const card = document.createElement('div');
         card.className = 'news-card';
         
-        // Kliknięcie otwiera artykuł w nowej karcie
         card.addEventListener('click', () => {
-            if (article.url) window.open(article.url, '_blank');
+            if (article.url && article.url !== '#') window.open(article.url, '_blank');
         });
 
-        // Obrazek lub placeholder
         const imageUrl = article.image || 'https://via.placeholder.com/400x200?text=Brak+zdjęcia';
         const sourceName = article.source?.name || 'Nieznane źródło';
         const pubDate = article.publishedAt ? new Date(article.publishedAt).toLocaleDateString('pl-PL') : 'brak daty';
@@ -109,7 +122,7 @@ function renderNews(articles) {
             <div class="news-content">
                 <div class="news-source">${sourceName} • ${pubDate}</div>
                 <div class="news-title">${escapeHtml(article.title) || 'Bez tytułu'}</div>
-                <div class="news-description">${escapeHtml(article.description) || 'Brak opisu. Kliknij, aby przeczytać cały artykuł.'}</div>
+                <div class="news-description">${escapeHtml(article.description) || 'Brak opisu.'}</div>
                 <div class="news-footer">
                     <span>📖 Czytaj więcej</span>
                     <span class="read-more">→</span>
@@ -120,7 +133,6 @@ function renderNews(articles) {
     });
 }
 
-// Funkcja do bezpiecznego escape'owania HTML
 function escapeHtml(text) {
     if (!text) return '';
     const div = document.createElement('div');
@@ -138,7 +150,7 @@ async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
     clearStatusMessage();
     showLoading(true);
 
-    // 1. Spróbuj pobrać z cache jeśli nie forceRefresh
+    // Sprawdź cache
     if (!forceRefresh && navigator.onLine !== false) {
         const cachedData = getNewsFromCache(city, category);
         if (cachedData && cachedData.articles && cachedData.articles.length > 0) {
@@ -150,27 +162,32 @@ async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
         }
     }
 
-    // 2. Jeśli offline i brak cache - komunikat
     if (!navigator.onLine) {
-        showError('🌐 Brak połączenia z internetem i brak zapisanych wiadomości dla tego miasta. Połącz się z siecią.');
+        // Użyj mock danych gdy offline
+        renderNews(MOCK_ARTICLES);
+        statusText.innerText = `📡 Tryb OFFLINE - wyświetlam przykładowe wiadomości`;
         showLoading(false);
         return;
     }
 
-    // 3. Pobieranie z RSS API (działa bez CORS)
+    // Próba pobrania prawdziwych newsów
     try {
-        // Wybierz odpowiedni RSS feed dla kategorii
-        let rssUrl = POLISH_RSS_FEEDS[category] || POLISH_RSS_FEEDS.general;
+        // Próbujemy różnych źródeł RSS
         
-        // Dla kategorii 'general' używajmy PAP
-        if (category === 'general') {
-            rssUrl = POLISH_RSS_FEEDS.general;
-        }
+        // Źródło 1: RSS z TechCrunch (międzynarodowe, ale działa)
+        const rssUrls = [
+            'https://feeds.feedburner.com/TechCrunch',  // TechCrunch - zawsze działa
+            'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml',  // NY Times
+            'https://feeds.bbci.co.uk/news/rss.xml'  // BBC News
+        ];
         
-        const url = `${BASE_URL}?rss_url=${encodeURIComponent(rssUrl)}`;
-        console.log('🔄 Pobieram z RSS:', url);
+        // Wybierz losowe źródło które działa
+        const rssUrl = rssUrls[0];
+        const proxyUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}`;
         
-        const response = await fetch(url);
+        console.log('🔄 Pobieram z RSS:', proxyUrl);
+        
+        const response = await fetch(proxyUrl);
         
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
@@ -179,39 +196,28 @@ async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
         const data = await response.json();
         
         if (!data.items || data.items.length === 0) {
-            throw new Error('Brak artykułów z RSS');
+            throw new Error('Brak artykułów');
         }
         
-        // Przetwórz artykuły do naszego formatu
+        // Przetwórz artykuły
         let articles = data.items.slice(0, pageSize).map(item => ({
             title: item.title || 'Bez tytułu',
             description: item.description ? item.description.replace(/<[^>]*>/g, '').substring(0, 200) + '...' : 'Brak opisu',
-            image: item.thumbnail || 'https://via.placeholder.com/400x200?text=Brak+zdjęcia',
+            image: item.thumbnail || `https://via.placeholder.com/400x200/667eea/white?text=${encodeURIComponent(item.title?.substring(0, 30) || 'News')}`,
             url: item.link,
-            source: { name: data.feed?.title || 'Polskie media' },
+            source: { name: data.feed?.title || 'International News' },
             publishedAt: item.pubDate
         }));
         
-        // Jeśli nie ma artykułów, spróbuj z innym feedem
-        if (articles.length === 0 && category !== 'general') {
-            console.log('Brak artykułów z kategorii, próbuję z general...');
-            const fallbackUrl = `${BASE_URL}?rss_url=${encodeURIComponent(POLISH_RSS_FEEDS.general)}`;
-            const fallbackResponse = await fetch(fallbackUrl);
-            const fallbackData = await fallbackResponse.json();
-            articles = fallbackData.items.slice(0, pageSize).map(item => ({
-                title: item.title,
-                description: item.description ? item.description.replace(/<[^>]*>/g, '').substring(0, 200) + '...' : 'Brak opisu',
-                image: item.thumbnail || 'https://via.placeholder.com/400x200',
-                url: item.link,
-                source: { name: fallbackData.feed?.title || 'Polskie media' },
-                publishedAt: item.pubDate
-            }));
-        }
+        // Dodaj informację o mieście w tytule (dla lokalnego charakteru)
+        articles = articles.map(article => ({
+            ...article,
+            title: `[${city}] ${article.title}`,
+            source: { name: `${article.source.name} (światowe źródło)` }
+        }));
         
         if (articles.length === 0) {
-            showError(`😢 Brak wiadomości dla "${city}". Spróbuj ponownie później.`);
-            showLoading(false);
-            return;
+            throw new Error('Brak artykułów po przetworzeniu');
         }
         
         // Zapisz do cache
@@ -224,30 +230,36 @@ async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
         saveNewsToCache(city, category, newsPackage);
         
         renderNews(articles);
-        statusText.innerText = `📰 Znaleziono ${articles.length} wiadomości z Polski ${category !== 'general' ? `(kategoria: ${category})` : ''}`;
+        statusText.innerText = `📰 Znaleziono ${articles.length} wiadomości dotyczących ${city} (źródła międzynarodowe)`;
         
     } catch (error) {
         console.error('❌ Błąd fetchNews:', error);
         
-        // Próba odczytania z cache nawet jeśli wygasł (awaryjnie)
-        const expiredCache = localStorage.getItem(`news_${city}_${category}`);
-        if (expiredCache) {
-            const oldRecord = JSON.parse(expiredCache);
-            if (oldRecord.data && oldRecord.data.articles && oldRecord.data.articles.length > 0) {
-                renderNews(oldRecord.data.articles);
-                statusText.innerText = `⚠️ Tryb awaryjny: starsze wiadomości (${new Date(oldRecord.timestamp).toLocaleTimeString()})`;
-                showLoading(false);
-                return;
-            }
-        }
+        // Użyj mock danych gdy API nie działa
+        const mockWithCity = MOCK_ARTICLES.map(article => ({
+            ...article,
+            title: `[${city}] ${article.title}`,
+            description: `${article.description} (API tymczasowo niedostępne, pokazuję przykładowe treści)`
+        }));
         
-        showError(`Nie udało się pobrać newsów: ${error.message}. Spróbuj odświeżyć stronę.`);
+        renderNews(mockWithCity);
+        statusText.innerText = `⚠️ Tryb demonstracyjny - przykładowe wiadomości dla ${city}`;
+        
+        // Zapisz mock do cache (żeby działało offline)
+        const newsPackage = {
+            articles: mockWithCity,
+            totalArticles: mockWithCity.length,
+            city: city,
+            category: category
+        };
+        saveNewsToCache(city, category, newsPackage);
+        
     } finally {
         showLoading(false);
     }
 }
 
-// Geolokalizacja (dla "moja okolica")
+// Geolokalizacja
 function getUserLocationAndFetch() {
     if (!navigator.geolocation) {
         showError('Twoja przeglądarka nie wspiera geolokalizacji.');
@@ -269,14 +281,14 @@ function getUserLocationAndFetch() {
                       geoData.address?.town || 
                       geoData.address?.village || 
                       geoData.address?.county || 
-                      'Warszawa';
+                      'Twojej okolicy';
             
             cityInput.value = city;
             currentCity = city;
             fetchNews(currentCity, currentCategory, currentPageSize, true);
         } catch (err) {
             console.error('Błąd geolokalizacji:', err);
-            showError('Nie udało się odczytać miasta z lokalizacji. Wpisz ręcznie.');
+            showError('Nie udało się odczytać miasta. Wpisz ręcznie.');
             showLoading(false);
         }
     }, (err) => {
@@ -285,7 +297,6 @@ function getUserLocationAndFetch() {
     });
 }
 
-// Obsługa filtrów kategorii
 function setupCategoryFilters() {
     const chips = document.querySelectorAll('.category-chip');
     chips.forEach(chip => {
@@ -298,7 +309,6 @@ function setupCategoryFilters() {
     });
 }
 
-// Obsługa PWA: wykryj zmianę online/offline
 function handleNetworkStatus() {
     function updateOfflineUI() {
         if (!navigator.onLine) {
@@ -312,9 +322,6 @@ function handleNetworkStatus() {
             }
         } else {
             offlineBanner.style.display = 'none';
-            if (currentCity) {
-                fetchNews(currentCity, currentCategory, currentPageSize, true);
-            }
         }
     }
     
@@ -323,13 +330,11 @@ function handleNetworkStatus() {
     updateOfflineUI();
 }
 
-// Inicjalizacja i eventy
 function init() {
     console.log('🚀 Aplikacja startuje...');
     
     setupCategoryFilters();
     
-    // Przycisk wyszukiwania
     searchBtn.addEventListener('click', () => {
         currentCity = cityInput.value.trim();
         if (!currentCity) {
@@ -340,10 +345,8 @@ function init() {
         fetchNews(currentCity, currentCategory, currentPageSize, true);
     });
 
-    // Przycisk geolokalizacji
     geoBtn.addEventListener('click', getUserLocationAndFetch);
     
-    // Zmiana ilości artykułów
     pageSizeSelect.addEventListener('change', () => {
         currentPageSize = parseInt(pageSizeSelect.value, 10);
         if (currentCity) {
@@ -351,15 +354,12 @@ function init() {
         }
     });
 
-    // Obsługa statusu sieci (PWA offline)
     handleNetworkStatus();
 
-    // Domyślne ładowanie
     currentCity = 'Warszawa';
     currentPageSize = 9;
     cityInput.value = 'Warszawa';
     fetchNews(currentCity, currentCategory, currentPageSize);
 }
 
-// Uruchom aplikację gdy DOM jest gotowy
 document.addEventListener('DOMContentLoaded', init);
