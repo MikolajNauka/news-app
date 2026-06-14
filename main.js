@@ -1,9 +1,9 @@
 // --------------------- KONFIGURACJA -------------------------
-const GNEWS_API_KEY = 'a7142e3ae69ca2af595e522a78ddf860';  
-const BASE_URL = 'https://gnews.io/api/v4/search';
+// Uwaga: API key jest teraz bezpiecznie przechowywany po stronie serwera!
+// Frontend nie ma już dostępu do klucza API
 
 // Zmienne stanu aplikacji
-let currentCity = 'Gdańsk';
+let currentCity = 'Warszawa';
 let currentCategory = 'general';
 let currentPageSize = 9;
 let isLoading = false;
@@ -120,8 +120,7 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Główna funkcja pobierania newsów z API (lub cache)
-// POPRAWIOMA FUNKCJA fetchNews - ZAMIEŃ CAŁĄ TĘ FUNKCJĘ
+// Główna funkcja pobierania newsów z API (przez backend Node.js)
 async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
     if (!city.trim()) {
         showError('❌ Wpisz nazwę miasta!');
@@ -145,48 +144,28 @@ async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
 
     // 2. Jeśli offline i brak cache - komunikat
     if (!navigator.onLine) {
-        showError('🌐 Brak połączenia z internetem i brak zapisanych wiadomości. Połącz się z siecią.');
+        showError('🌐 Brak połączenia z internetem i brak zapisanych wiadomości dla tego miasta. Połącz się z siecią.');
         showLoading(false);
         return;
     }
 
-    // 3. Pobieranie z API GNews
+    // 3. Pobieranie przez własne API backendu (Node.js)
     try {
-        // Poprawione budowanie zapytania - GNews wymaga angielskich słów kluczowych
-        let query = city;
-        if (category && category !== 'general') {
-            // Tłumaczenie kategorii na angielski (GNews oczekuje angielskich nazw)
-            const categoryMap = {
-                'technology': 'technology',
-                'sports': 'sports',
-                'business': 'business',
-                'health': 'health',
-                'science': 'science',
-                'entertainment': 'entertainment'
-            };
-            const englishCategory = categoryMap[category] || category;
-            query = `${city} ${englishCategory}`;
-        }
-        
-        // Dodaj "Poland" lub "Polska" dla lepszych wyników
-        query = `${query} Polska`;
-
-        // Poprawiony URL - dodanie sortby i proper encoding
-        const url = `${BASE_URL}?q=${encodeURIComponent(query)}&lang=pl&country=pl&max=${pageSize}&sortby=relevance&apikey=${GNEWS_API_KEY}`;
-        console.log('🔄 Zapytanie do API:', url);
+        // Budowanie zapytania do naszego serwera
+        const url = `/api/news?city=${encodeURIComponent(city)}&category=${category}&pageSize=${pageSize}`;
+        console.log('🔄 Zapytanie do backendu:', url);
 
         const response = await fetch(url);
         
-        console.log('📡 Status odpowiedzi:', response.status);
+        console.log('📡 Status odpowiedzi backendu:', response.status);
         
         if (!response.ok) {
-            const errorText = await response.text();
-            console.error('Błąd odpowiedzi:', errorText);
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const errorData = await response.json();
+            throw new Error(errorData.error || `HTTP ${response.status}`);
         }
 
         const data = await response.json();
-        console.log('📦 Odpowiedź API:', data);
+        console.log('📦 Odpowiedź backendu:', data);
         
         if (data.errors) {
             throw new Error(data.errors[0] || 'Błąd API');
@@ -195,29 +174,6 @@ async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
         const articles = data.articles || [];
         
         if (articles.length === 0) {
-            // Spróbuj bez kategorii
-            if (category !== 'general') {
-                console.log('Brak wyników z kategorią, próbuję bez kategorii...');
-                const fallbackUrl = `${BASE_URL}?q=${encodeURIComponent(city + " Polska")}&lang=pl&country=pl&max=${pageSize}&apikey=${GNEWS_API_KEY}`;
-                const fallbackResponse = await fetch(fallbackUrl);
-                const fallbackData = await fallbackResponse.json();
-                const fallbackArticles = fallbackData.articles || [];
-                
-                if (fallbackArticles.length > 0) {
-                    const newsPackage = {
-                        articles: fallbackArticles,
-                        totalArticles: fallbackArticles.length,
-                        city: city,
-                        category: category
-                    };
-                    saveNewsToCache(city, category, newsPackage);
-                    renderNews(fallbackArticles);
-                    statusText.innerText = `📰 Znaleziono ${fallbackArticles.length} wiadomości dla "${city}" (bez filtra kategorii)`;
-                    showLoading(false);
-                    return;
-                }
-            }
-            
             showError(`😢 Brak wiadomości dla "${city}". Spróbuj innego miasta lub sprawdź pisownię.`);
             showLoading(false);
             return;
@@ -244,7 +200,7 @@ async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
             const oldRecord = JSON.parse(expiredCache);
             if (oldRecord.data && oldRecord.data.articles && oldRecord.data.articles.length > 0) {
                 renderNews(oldRecord.data.articles);
-                statusText.innerText = `⚠️ Tryb awaryjny: starsze wiadomości z ${city} (${new Date(oldRecord.timestamp).toLocaleTimeString()})`;
+                statusText.innerText = `⚠️ Tryb awaryjny: starsze wiadomości z ${city} (zapisane ${new Date(oldRecord.timestamp).toLocaleTimeString()})`;
                 showLoading(false);
                 return;
             }
@@ -252,12 +208,12 @@ async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
         
         // Sprawdź konkretne błędy
         let errorMessage = error.message;
-        if (error.message.includes('403')) {
-            errorMessage = '🔑 Błąd autoryzacji API. Sprawdź klucz API w GNews.io';
+        if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+            errorMessage = '🌐 Nie można połączyć się z serwerem. Upewnij się, że backend Node.js działa (npm start).';
         } else if (error.message.includes('429')) {
             errorMessage = '⏰ Przekroczono limit zapytań do API. Spróbuj za chwilę.';
-        } else if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-            errorMessage = '🌐 Problem z połączeniem. Sprawdź czy klucz API jest prawidłowy i czy masz internet.';
+        } else if (error.message.includes('403')) {
+            errorMessage = '🔑 Błąd autoryzacji API. Sprawdź klucz API w pliku server.js';
         }
         
         showError(`Nie udało się pobrać newsów: ${errorMessage}`);
@@ -294,6 +250,7 @@ function getUserLocationAndFetch() {
             currentCity = city;
             fetchNews(currentCity, currentCategory, currentPageSize, true);
         } catch (err) {
+            console.error('Błąd geolokalizacji:', err);
             showError('Nie udało się odczytać miasta z lokalizacji. Wpisz ręcznie.');
             showLoading(false);
         }
@@ -327,8 +284,6 @@ function handleNetworkStatus() {
                 if (cachedData && cachedData.articles) {
                     renderNews(cachedData.articles);
                     statusText.innerText = `📡 Tryb OFFLINE – wyświetlam zapisane newsy dla ${currentCity}`;
-                } else {
-                    showError('Brak połączenia internetowego i brak zapisanych wiadomości dla tego widoku.');
                 }
             }
         } else {
@@ -347,13 +302,15 @@ function handleNetworkStatus() {
 
 // Inicjalizacja i eventy
 function init() {
+    console.log('🚀 Aplikacja startuje...');
+    
     setupCategoryFilters();
     
     // Przycisk wyszukiwania
     searchBtn.addEventListener('click', () => {
         currentCity = cityInput.value.trim();
         if (!currentCity) {
-            showError('Wpisz nazwę miasta.');
+            showError('❌ Wpisz nazwę miasta.');
             return;
         }
         currentPageSize = parseInt(pageSizeSelect.value, 10);
