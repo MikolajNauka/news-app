@@ -8,6 +8,21 @@ const urlsToCache = [
   'icon-512.png'
 ];
 
+self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
+  
+  // NIE przechwytuj zapytań do API
+  if (url.hostname === 'gnews.io' || url.hostname === 'nominatim.openstreetmap.org') {
+    console.log('Pomijam API w service worker:', url.href);
+    return;  // Pozwól przeglądarce normalnie obsłużyć zapytanie
+  }
+  
+  // Reszta kodu service workera...
+  event.respondWith(
+    // ... twój kod cache'owania
+  );
+});
+
 self.addEventListener('install', event => {
   console.log('Service Worker: Instalowanie...');
   event.waitUntil(

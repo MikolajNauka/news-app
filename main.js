@@ -121,9 +121,10 @@ function escapeHtml(text) {
 }
 
 // Główna funkcja pobierania newsów z API (lub cache)
+// POPRAWIOMA FUNKCJA fetchNews - ZAMIEŃ CAŁĄ TĘ FUNKCJĘ
 async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
     if (!city.trim()) {
-        showError('Wpisz nazwę miasta!');
+        showError('❌ Wpisz nazwę miasta!');
         return;
     }
 
@@ -137,42 +138,90 @@ async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
             console.log('📦 Używam cache dla:', city, category);
             renderNews(cachedData.articles);
             showLoading(false);
-            statusText.innerText = `📰 ${cachedData.totalArticles || cachedData.articles.length} wiadomości z ${city} (z pamięci podręcznej)`;
+            statusText.innerText = `📰 ${cachedData.articles.length} wiadomości z ${city} (z pamięci podręcznej)`;
             return;
         }
     }
 
     // 2. Jeśli offline i brak cache - komunikat
     if (!navigator.onLine) {
-        showError('🌐 Brak połączenia z internetem i brak zapisanych wiadomości dla tego miasta. Połącz się z siecią.');
+        showError('🌐 Brak połączenia z internetem i brak zapisanych wiadomości. Połącz się z siecią.');
         showLoading(false);
         return;
     }
 
     // 3. Pobieranie z API GNews
     try {
-        // Budowanie zapytania: "Warszawa" + opcjonalna kategoria
-        let query = `${city}`;
+        // Poprawione budowanie zapytania - GNews wymaga angielskich słów kluczowych
+        let query = city;
         if (category && category !== 'general') {
-            query = `${city} ${category}`;
+            // Tłumaczenie kategorii na angielski (GNews oczekuje angielskich nazw)
+            const categoryMap = {
+                'technology': 'technology',
+                'sports': 'sports',
+                'business': 'business',
+                'health': 'health',
+                'science': 'science',
+                'entertainment': 'entertainment'
+            };
+            const englishCategory = categoryMap[category] || category;
+            query = `${city} ${englishCategory}`;
         }
+        
+        // Dodaj "Poland" lub "Polska" dla lepszych wyników
+        query = `${query} Polska`;
 
-        const url = `${BASE_URL}?q=${encodeURIComponent(query)}&lang=pl&country=pl&max=${pageSize}&apikey=${GNEWS_API_KEY}`;
+        // Poprawiony URL - dodanie sortby i proper encoding
+        const url = `${BASE_URL}?q=${encodeURIComponent(query)}&lang=pl&country=pl&max=${pageSize}&sortby=relevance&apikey=${GNEWS_API_KEY}`;
         console.log('🔄 Zapytanie do API:', url);
 
         const response = await fetch(url);
         
+        console.log('📡 Status odpowiedzi:', response.status);
+        
         if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Błąd odpowiedzi:', errorText);
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
         const data = await response.json();
+        console.log('📦 Odpowiedź API:', data);
         
         if (data.errors) {
             throw new Error(data.errors[0] || 'Błąd API');
         }
 
         const articles = data.articles || [];
+        
+        if (articles.length === 0) {
+            // Spróbuj bez kategorii
+            if (category !== 'general') {
+                console.log('Brak wyników z kategorią, próbuję bez kategorii...');
+                const fallbackUrl = `${BASE_URL}?q=${encodeURIComponent(city + " Polska")}&lang=pl&country=pl&max=${pageSize}&apikey=${GNEWS_API_KEY}`;
+                const fallbackResponse = await fetch(fallbackUrl);
+                const fallbackData = await fallbackResponse.json();
+                const fallbackArticles = fallbackData.articles || [];
+                
+                if (fallbackArticles.length > 0) {
+                    const newsPackage = {
+                        articles: fallbackArticles,
+                        totalArticles: fallbackArticles.length,
+                        city: city,
+                        category: category
+                    };
+                    saveNewsToCache(city, category, newsPackage);
+                    renderNews(fallbackArticles);
+                    statusText.innerText = `📰 Znaleziono ${fallbackArticles.length} wiadomości dla "${city}" (bez filtra kategorii)`;
+                    showLoading(false);
+                    return;
+                }
+            }
+            
+            showError(`😢 Brak wiadomości dla "${city}". Spróbuj innego miasta lub sprawdź pisownię.`);
+            showLoading(false);
+            return;
+        }
         
         // Zapisz do cache
         const newsPackage = {
@@ -187,19 +236,31 @@ async function fetchNews(city, category, pageSize = 9, forceRefresh = false) {
         statusText.innerText = `📰 Znaleziono ${articles.length} wiadomości dla "${city}" ${category !== 'general' ? `(kategoria: ${category})` : ''}`;
         
     } catch (error) {
-        console.error('Błąd fetchNews:', error);
+        console.error('❌ Błąd fetchNews:', error);
         
         // Próba odczytania z cache nawet jeśli wygasł (awaryjnie)
         const expiredCache = localStorage.getItem(`news_${city}_${category}`);
         if (expiredCache) {
             const oldRecord = JSON.parse(expiredCache);
-            renderNews(oldRecord.data.articles || []);
-            statusText.innerText = `⚠️ Tryb awaryjny: starsze wiadomości z ${city} (API niedostępne)`;
-            showLoading(false);
-            return;
+            if (oldRecord.data && oldRecord.data.articles && oldRecord.data.articles.length > 0) {
+                renderNews(oldRecord.data.articles);
+                statusText.innerText = `⚠️ Tryb awaryjny: starsze wiadomości z ${city} (${new Date(oldRecord.timestamp).toLocaleTimeString()})`;
+                showLoading(false);
+                return;
+            }
         }
         
-        showError(`Nie udało się pobrać newsów: ${error.message}. Sprawdź klucz API lub połączenie.`);
+        // Sprawdź konkretne błędy
+        let errorMessage = error.message;
+        if (error.message.includes('403')) {
+            errorMessage = '🔑 Błąd autoryzacji API. Sprawdź klucz API w GNews.io';
+        } else if (error.message.includes('429')) {
+            errorMessage = '⏰ Przekroczono limit zapytań do API. Spróbuj za chwilę.';
+        } else if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+            errorMessage = '🌐 Problem z połączeniem. Sprawdź czy klucz API jest prawidłowy i czy masz internet.';
+        }
+        
+        showError(`Nie udało się pobrać newsów: ${errorMessage}`);
     } finally {
         showLoading(false);
     }
