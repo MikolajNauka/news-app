@@ -1,4 +1,4 @@
-const CACHE_NAME = 'news-app-v1';
+const CACHE_NAME = 'news-app';
 const urlsToCache = [
   '/',
   '/index.html',
